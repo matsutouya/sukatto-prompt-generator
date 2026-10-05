@@ -46,17 +46,35 @@ function stripDialogue(text) {
 
 // ===== 12秒クリップの時間枠とセリフ上限 =====
 // 日本語の音声は1秒6音ほど。枠ごとに上限を決め、1つのセリフは1つの枠の中で言い終える。
-export const WINDOWS = [
-  { key: 'A', label: '0:00-0:04' },
-  { key: 'B', label: '0:04-0:08' },
-  { key: 'C', label: '0:08-0:10.5' },
-];
-export const HOLD_LABEL = '0:10.5-0:12';
-export const CAPS = {
-  part1: { A: 24, B: 24, C: 15 },
-  part2: { A: 21, B: 24, C: 15 },
+export const CONFIGS = {
+  12: {
+    seconds: 12,
+    windows: [
+      { key: 'A', label: '0:00-0:04' },
+      { key: 'B', label: '0:04-0:08' },
+      { key: 'C', label: '0:08-0:10.5' },
+    ],
+    hold: '0:10.5-0:12',
+    caps: { part1: { A: 24, B: 24, C: 15 }, part2: { A: 21, B: 24, C: 15 } },
+    totalCap: 55,
+  },
+  15: {
+    seconds: 15,
+    windows: [
+      { key: 'A', label: '0:00-0:05' },
+      { key: 'B', label: '0:05-0:10' },
+      { key: 'C', label: '0:10-0:13' },
+    ],
+    hold: '0:13-0:15',
+    caps: { part1: { A: 30, B: 30, C: 18 }, part2: { A: 27, B: 30, C: 18 } },
+    totalCap: 70,
+  },
 };
-export const TOTAL_CAP = 55;
+// 12秒版の既定値（互換用）
+export const WINDOWS = CONFIGS[12].windows;
+export const HOLD_LABEL = CONFIGS[12].hold;
+export const CAPS = CONFIGS[12].caps;
+export const TOTAL_CAP = CONFIGS[12].totalCap;
 
 // 音の数: かな=1・漢字=2・数字=2・英字=1・句読点と「…」=0（小さい ゃゅょ も0）
 export function mora(s) {
@@ -75,20 +93,20 @@ function lowerFirst(text) {
   return /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
 }
 
-function measure(part, lines) {
-  const caps = CAPS[part];
+function measure(part, lines, cfg) {
+  const caps = cfg.caps[part];
   const perWindow = { A: 0, B: 0, C: 0 };
   for (const l of lines) perWindow[l.w] += mora(l.t);
   const total = lines.reduce((s, l) => s + mora(l.t), 0);
-  const ok = total <= TOTAL_CAP && WINDOWS.every(w => perWindow[w.key] <= caps[w.key]);
+  const ok = total <= cfg.totalCap && cfg.windows.every(w => perWindow[w.key] <= caps[w.key]);
   return { perWindow, total, ok };
 }
 
-function buildPart({ part, charBlock, setting, scenes, lines }) {
+function buildPart({ part, charBlock, setting, scenes, lines, cfg }) {
   const isPart2 = part === 'part2';
-  const head = `Cinematic short drama, 9:16 vertical, 4K, photorealistic, dramatic lighting, Japanese contemporary setting. 12 seconds. No background music.${isPart2 ? ' Continuing directly from Part 1, same location, same lighting, same characters.' : ''}`;
+  const head = `Cinematic short drama, 9:16 vertical, 4K, photorealistic, dramatic lighting, Japanese contemporary setting. ${cfg.seconds} seconds. No background music.${isPart2 ? ' Continuing directly from Part 1, same location, same lighting, same characters.' : ''}`;
 
-  const windows = WINDOWS.map((w, i) => {
+  const windows = cfg.windows.map((w, i) => {
     let action = stripDialogue(scenes[i] || '');
     if (isPart2 && i === 0) action = `Silent beat for half a second, then ${lowerFirst(action)}`;
     const spoken = lines
@@ -99,8 +117,8 @@ function buildPart({ part, charBlock, setting, scenes, lines }) {
   }).join('\n\n');
 
   const hold = isPart2
-    ? `(${HOLD_LABEL}) Wide shot, static hold, no dialogue, no camera movement. Characters nearly still. Silent.`
-    : `(${HOLD_LABEL}) Static hold, no dialogue, no camera movement, no character motion. Silent.`;
+    ? `(${cfg.hold}) Wide shot, static hold, no dialogue, no camera movement. Characters nearly still. Silent.`
+    : `(${cfg.hold}) Static hold, no dialogue, no camera movement, no character motion. Silent.`;
 
   return `${head}
 
@@ -110,7 +128,7 @@ ${charBlock}
 #SETTING
 ${setting}
 
-#SCENE (12 seconds, no text on screen, no background music)
+#SCENE (${cfg.seconds} seconds, no text on screen, no background music)
 ${windows}
 
 ${hold}`;
@@ -119,6 +137,7 @@ ${hold}`;
 // ===== MAIN GENERATION =====
 // opts.v1 / opts.v2: 使う案の番号（0〜4）。省略するとランダム。
 export function generatePrompts(theme, opts = {}) {
+  const cfg = CONFIGS[opts.seconds || 12];
   const setting = settingDescriptions[theme.setting] || settingDescriptions["オフィス"];
   const sl = shortLines[theme.id];
   if (!sl) throw new Error(`theme ${theme.id}: 短縮セリフがありません`);
@@ -131,21 +150,22 @@ export function generatePrompts(theme, opts = {}) {
   const lines1 = sl.v1[i1];
   const lines2 = sl.v2[i2];
 
-  const part1 = softenBanned(buildPart({ part: 'part1', charBlock: charBlockFor(lines1), setting, scenes: theme.scene1, lines: lines1 }));
-  const part2 = softenBanned(buildPart({ part: 'part2', charBlock: charBlockFor(lines2), setting, scenes: theme.scene2, lines: lines2 }));
+  const part1 = softenBanned(buildPart({ part: 'part1', charBlock: charBlockFor(lines1), setting, scenes: theme.scene1, lines: lines1, cfg }));
+  const part2 = softenBanned(buildPart({ part: 'part2', charBlock: charBlockFor(lines2), setting, scenes: theme.scene2, lines: lines2, cfg }));
 
   const allLines = [...lines1.map(l => ({ ...l, part: 1 })), ...lines2.map(l => ({ ...l, part: 2 }))]
     .map(l => ({ speaker: l.jp, text: l.t, w: l.w, part: l.part, mora: mora(l.t) }));
   const scriptText = allLines.map(l => `${l.speaker}「${l.text}」`).join('\n');
 
-  const m1 = measure('part1', lines1);
-  const m2 = measure('part2', lines2);
+  const m1 = measure('part1', lines1, cfg);
+  const m2 = measure('part2', lines2, cfg);
 
   return {
     part1, part2,
     script: scriptText,
     lines: allLines,
     endText: theme.endText,
+    cfg,
     variant: { v1: i1, v2: i2 },
     meta: {
       lineCount: allLines.length,
@@ -158,7 +178,7 @@ export function generatePrompts(theme, opts = {}) {
 
 // ===== 一括生成（100話など） =====
 // 100テーマを1話ずつ使う。100話を超えるときは2周目から別の案を使う。
-export function generateEpisodes(themeList, count, { shuffle = false } = {}) {
+export function generateEpisodes(themeList, count, { shuffle = false, seconds = 12 } = {}) {
   let order = themeList.slice();
   if (shuffle) {
     for (let i = order.length - 1; i > 0; i--) {
@@ -170,7 +190,7 @@ export function generateEpisodes(themeList, count, { shuffle = false } = {}) {
   for (let n = 0; n < count; n++) {
     const theme = order[n % order.length];
     const round = Math.floor(n / order.length);
-    const result = generatePrompts(theme, round === 0 ? {} : { v1: round % 5, v2: round % 5 });
+    const result = generatePrompts(theme, round === 0 ? { seconds } : { v1: round % 5, v2: round % 5, seconds });
     episodes.push({ no: n + 1, theme, result });
   }
   return episodes;

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { themes, getRandomTheme } from './data/themes'
-import { generatePrompts, generateEpisodes, episodesToTxt, episodesToCsv, WINDOWS, HOLD_LABEL, TOTAL_CAP } from './data/promptTemplates'
+import { generatePrompts, generateEpisodes, episodesToTxt, episodesToCsv } from './data/promptTemplates'
 import './index.css'
 
 function CopyButton({ text, label = 'COPY', size = 'sm' }) {
@@ -25,7 +25,7 @@ function CopyButton({ text, label = 'COPY', size = 'sm' }) {
   )
 }
 
-function MoraBadge({ label, total, ok }) {
+function MoraBadge({ label, total, ok, cap }) {
   const color = ok ? 'var(--sk-success)' : 'var(--sk-danger)'
   return (
     <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{
@@ -33,7 +33,7 @@ function MoraBadge({ label, total, ok }) {
       color,
       border: `1px solid ${color}`,
     }}>
-      {label} {total}/{TOTAL_CAP}音 {ok ? '✓' : '△長い'}
+      {label} {total}/{cap}音 {ok ? '✓' : '△長い'}
     </span>
   )
 }
@@ -50,14 +50,14 @@ function download(filename, text, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-function BatchPanel() {
+function BatchPanel({ seconds }) {
   const [count, setCount] = useState(100)
   const [shuffle, setShuffle] = useState(false)
   const [episodes, setEpisodes] = useState([])
   const [open, setOpen] = useState(null)
 
   const handleBuild = () => {
-    setEpisodes(generateEpisodes(themes, count, { shuffle }))
+    setEpisodes(generateEpisodes(themes, count, { shuffle, seconds }))
     setOpen(null)
   }
   const okCount = episodes.filter(e => e.result.meta.ok).length
@@ -91,7 +91,7 @@ function BatchPanel() {
             className="px-4 py-2 text-xs font-bold rounded-lg transition active:scale-95"
             style={{ background: 'var(--sk-primary)', color: '#fff' }}
           >
-            {count}話を生成
+            {count}話を生成（{seconds}秒×2）
           </button>
         </div>
         <p className="text-[10px] leading-relaxed" style={{ color: 'var(--sk-text-dim)' }}>
@@ -114,7 +114,7 @@ function BatchPanel() {
             </div>
             <div className="flex gap-2 flex-wrap">
               <button
-                onClick={() => download(`sukatto_${episodes.length}wa_prompts.txt`, txt, 'text/plain;charset=utf-8')}
+                onClick={() => download(`sukatto_${episodes.length}wa_${seconds}s_prompts.txt`, txt, 'text/plain;charset=utf-8')}
                 className="px-3 py-2 text-xs font-bold rounded-lg"
                 style={{ background: 'var(--sk-primary-dim)', border: '1px solid var(--sk-primary)', color: 'var(--sk-primary)' }}
               >
@@ -141,8 +141,8 @@ function BatchPanel() {
                 >
                   <span className="shrink-0 w-8 text-center font-bold" style={{ color: 'var(--sk-text-light)' }}>{String(e.no).padStart(3, '0')}</span>
                   <p className="flex-1 leading-relaxed truncate">{e.theme.title}</p>
-                  <MoraBadge label="前" total={e.result.meta.part1.total} ok={e.result.meta.part1.ok} />
-                  <MoraBadge label="後" total={e.result.meta.part2.total} ok={e.result.meta.part2.ok} />
+                  <MoraBadge label="前" total={e.result.meta.part1.total} ok={e.result.meta.part1.ok} cap={e.result.cfg.totalCap} />
+                  <MoraBadge label="後" total={e.result.meta.part2.total} ok={e.result.meta.part2.ok} cap={e.result.cfg.totalCap} />
                   <CopyButton text={e.result.part1} label="前編" />
                   <CopyButton text={e.result.part2} label="後編" />
                 </div>
@@ -214,14 +214,14 @@ function PromptOutput({ result, theme }) {
         <div className="flex items-center justify-between px-4 py-2" style={{ background: 'var(--sk-gold-dim)', borderBottom: '1px solid var(--sk-border)' }}>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold" style={{ color: 'var(--sk-gold)' }}>台本 — {result.meta.lineCount}行</span>
-            <MoraBadge label="前編" total={result.meta.part1.total} ok={result.meta.part1.ok} />
-            <MoraBadge label="後編" total={result.meta.part2.total} ok={result.meta.part2.ok} />
+            <MoraBadge label="前編" total={result.meta.part1.total} ok={result.meta.part1.ok} cap={result.cfg.totalCap} />
+            <MoraBadge label="後編" total={result.meta.part2.total} ok={result.meta.part2.ok} cap={result.cfg.totalCap} />
           </div>
           <CopyButton text={result.script} label="COPY 台本" />
         </div>
         <div className="p-4 space-y-2">
           {result.lines.map((line, i) => {
-            const win = WINDOWS.find(w => w.key === line.w)
+            const win = result.cfg.windows.find(w => w.key === line.w)
             return (
               <div key={i} className="flex items-start gap-2">
                 <span className="text-[9px] shrink-0 px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
@@ -239,7 +239,7 @@ function PromptOutput({ result, theme }) {
           })}
           <div className="flex items-center gap-2 pt-1" style={{ borderTop: '1px dashed var(--sk-border)' }}>
             <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
-              {HOLD_LABEL}
+              {result.cfg.hold}
             </span>
             <span className="text-[10px]" style={{ color: 'var(--sk-text-dim)' }}>無音の静止（セリフなし。語尾が切れない余白）</span>
           </div>
@@ -305,16 +305,17 @@ function App() {
   const [history, setHistory] = useState([])
   const [tab, setTab] = useState('latest')
   const [mode, setMode] = useState('single')
+  const [seconds, setSeconds] = useState(12)
 
   const handleRandom = useCallback(() => {
     const theme = getRandomTheme()
-    const r = generatePrompts(theme)
+    const r = generatePrompts(theme, { seconds })
     setSelectedTheme(theme)
     setResult(r)
     setHistory(prev => [{ theme, result: r }, ...prev].slice(0, 5))
     setTab('latest')
     setMode('single')
-  }, [])
+  }, [seconds])
 
   return (
     <div className="min-h-screen paper-bg">
@@ -326,6 +327,18 @@ function App() {
             <p className="text-[10px]" style={{ color: 'var(--sk-text-dim)' }}>ショートドラマ台本＆プロンプト — {themes.length}テーマ</p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex rounded-xl overflow-hidden" style={{ border: '1px solid var(--sk-primary)' }}>
+              {[12, 15].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setSeconds(n)}
+                  className="px-3 py-2.5 text-xs font-bold transition"
+                  style={{ background: seconds === n ? 'var(--sk-primary)' : 'transparent', color: seconds === n ? '#fff' : 'var(--sk-primary)' }}
+                >
+                  {n}秒×2
+                </button>
+              ))}
+            </div>
             <button
               onClick={() => setMode('batch')}
               className="px-4 py-2.5 text-sm font-bold rounded-xl transition active:scale-95"
@@ -384,7 +397,7 @@ function App() {
         )}
 
         {/* Latest Output */}
-        {mode === 'batch' && <BatchPanel />}
+        {mode === 'batch' && <BatchPanel seconds={seconds} />}
 
         {mode === 'single' && tab === 'latest' && result && selectedTheme && (
           <PromptOutput result={result} theme={selectedTheme} />
@@ -401,7 +414,7 @@ function App() {
       </main>
 
       <footer className="py-4 text-center">
-        <p className="text-[10px]" style={{ color: 'var(--sk-text-light)' }}>Sukatto Prompt Generator v2.0</p>
+        <p className="text-[10px]" style={{ color: 'var(--sk-text-light)' }}>Sukatto Prompt Generator v2.1</p>
       </footer>
     </div>
   )
