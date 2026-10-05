@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { themes, getRandomTheme } from './data/themes'
-import { generatePrompts } from './data/promptTemplates'
+import { generatePrompts, generateEpisodes, episodesToTxt, episodesToCsv, WINDOWS, HOLD_LABEL, TOTAL_CAP } from './data/promptTemplates'
 import './index.css'
 
 function CopyButton({ text, label = 'COPY', size = 'sm' }) {
@@ -22,6 +22,141 @@ function CopyButton({ text, label = 'COPY', size = 'sm' }) {
     >
       {copied ? '✓ Copied' : label}
     </button>
+  )
+}
+
+function MoraBadge({ label, total, ok }) {
+  const color = ok ? 'var(--sk-success)' : 'var(--sk-danger)'
+  return (
+    <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{
+      background: ok ? 'rgba(46,164,79,0.1)' : 'rgba(215,58,73,0.1)',
+      color,
+      border: `1px solid ${color}`,
+    }}>
+      {label} {total}/{TOTAL_CAP}音 {ok ? '✓' : '△長い'}
+    </span>
+  )
+}
+
+function download(filename, text, type) {
+  const blob = new Blob([text], { type })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function BatchPanel() {
+  const [count, setCount] = useState(100)
+  const [shuffle, setShuffle] = useState(false)
+  const [episodes, setEpisodes] = useState([])
+  const [open, setOpen] = useState(null)
+
+  const handleBuild = () => {
+    setEpisodes(generateEpisodes(themes, count, { shuffle }))
+    setOpen(null)
+  }
+  const okCount = episodes.filter(e => e.result.meta.ok).length
+  const txt = episodes.length ? episodesToTxt(episodes) : ''
+
+  return (
+    <div className="space-y-4">
+      <div className="card p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-bold px-2 py-0.5 rounded" style={{ background: 'var(--sk-primary-dim)', color: 'var(--sk-primary)' }}>BATCH</span>
+          <span className="text-xs font-bold">まとめて生成（前編・後編を1話として）</span>
+        </div>
+        <div className="flex items-center gap-3 flex-wrap text-xs">
+          <label className="flex items-center gap-1.5">
+            話数
+            <select
+              value={count}
+              onChange={e => setCount(Number(e.target.value))}
+              className="px-2 py-1 rounded-md"
+              style={{ border: '1px solid var(--sk-border)', background: '#fff' }}
+            >
+              {[10, 30, 50, 100, 200].map(n => <option key={n} value={n}>{n}話</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" checked={shuffle} onChange={e => setShuffle(e.target.checked)} />
+            テーマの順番をランダムにする
+          </label>
+          <button
+            onClick={handleBuild}
+            className="px-4 py-2 text-xs font-bold rounded-lg transition active:scale-95"
+            style={{ background: 'var(--sk-primary)', color: '#fff' }}
+          >
+            {count}話を生成
+          </button>
+        </div>
+        <p className="text-[10px] leading-relaxed" style={{ color: 'var(--sk-text-dim)' }}>
+          テーマは{themes.length}個で、1話に1テーマを使います。100話を超える分は、2周目から別のセリフ案を使います（題名と説明文は同じものが出ます）。
+        </p>
+      </div>
+
+      {episodes.length > 0 && (
+        <>
+          <div className="card p-4 space-y-3">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold">{episodes.length}話を生成しました</span>
+              <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{
+                background: okCount === episodes.length ? 'rgba(46,164,79,0.1)' : 'rgba(215,58,73,0.1)',
+                color: okCount === episodes.length ? 'var(--sk-success)' : 'var(--sk-danger)',
+                border: `1px solid ${okCount === episodes.length ? 'var(--sk-success)' : 'var(--sk-danger)'}`,
+              }}>
+                セリフが12秒に収まる話 {okCount}/{episodes.length}
+              </span>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => download(`sukatto_${episodes.length}wa_prompts.txt`, txt, 'text/plain;charset=utf-8')}
+                className="px-3 py-2 text-xs font-bold rounded-lg"
+                style={{ background: 'var(--sk-primary-dim)', border: '1px solid var(--sk-primary)', color: 'var(--sk-primary)' }}
+              >
+                ⬇ プロンプト全部（txt）
+              </button>
+              <button
+                onClick={() => download(`sukatto_${episodes.length}wa_list.csv`, episodesToCsv(episodes), 'text/csv;charset=utf-8')}
+                className="px-3 py-2 text-xs font-bold rounded-lg"
+                style={{ background: 'var(--sk-gold-dim)', border: '1px solid var(--sk-gold)', color: 'var(--sk-gold)' }}
+              >
+                ⬇ 題名・説明文・台本の一覧（csv）
+              </button>
+              <CopyButton text={txt} label="◆ プロンプト全部をコピー" size="lg" />
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            {episodes.map((e, i) => (
+              <div key={i}>
+                <div
+                  className="flex items-center gap-2 px-3 py-2 text-xs cursor-pointer hover:bg-black/[0.02] transition"
+                  style={{ borderBottom: '1px solid var(--sk-border)' }}
+                  onClick={() => setOpen(open === i ? null : i)}
+                >
+                  <span className="shrink-0 w-8 text-center font-bold" style={{ color: 'var(--sk-text-light)' }}>{String(e.no).padStart(3, '0')}</span>
+                  <p className="flex-1 leading-relaxed truncate">{e.theme.title}</p>
+                  <MoraBadge label="前" total={e.result.meta.part1.total} ok={e.result.meta.part1.ok} />
+                  <MoraBadge label="後" total={e.result.meta.part2.total} ok={e.result.meta.part2.ok} />
+                  <CopyButton text={e.result.part1} label="前編" />
+                  <CopyButton text={e.result.part2} label="後編" />
+                </div>
+                {open === i && (
+                  <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--sk-border)', background: 'rgba(0,0,0,0.015)' }}>
+                    <PromptOutput result={e.result} theme={e.theme} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -79,38 +214,34 @@ function PromptOutput({ result, theme }) {
         <div className="flex items-center justify-between px-4 py-2" style={{ background: 'var(--sk-gold-dim)', borderBottom: '1px solid var(--sk-border)' }}>
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold" style={{ color: 'var(--sk-gold)' }}>台本 — {result.meta.lineCount}行</span>
-            <span className="text-[10px] px-2 py-0.5 rounded font-bold" style={{
-              background: result.meta.totalChars >= 60 && result.meta.totalChars <= 80 ? 'rgba(46,164,79,0.1)' : 'rgba(215,58,73,0.1)',
-              color: result.meta.totalChars >= 60 && result.meta.totalChars <= 80 ? 'var(--sk-success)' : 'var(--sk-danger)',
-              border: `1px solid ${result.meta.totalChars >= 60 && result.meta.totalChars <= 80 ? 'var(--sk-success)' : 'var(--sk-danger)'}`,
-            }}>
-              合計 {result.meta.totalChars}字 {result.meta.totalChars >= 60 && result.meta.totalChars <= 80 ? '✓' : result.meta.totalChars < 60 ? '△短い' : '△長い'}
-            </span>
-            {result.meta.part1Chars != null && (
-              <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
-                前編{result.meta.part1Chars}字 / 後編{result.meta.part2Chars}字
-              </span>
-            )}
+            <MoraBadge label="前編" total={result.meta.part1.total} ok={result.meta.part1.ok} />
+            <MoraBadge label="後編" total={result.meta.part2.total} ok={result.meta.part2.ok} />
           </div>
           <CopyButton text={result.script} label="COPY 台本" />
         </div>
         <div className="p-4 space-y-2">
-          {result.lines.map((line, i) => (
-            <div key={i} className="flex items-start gap-2">
-              <span className="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded" style={{ background: 'var(--sk-primary-dim)', color: 'var(--sk-primary)' }}>
-                {line.speaker}
-              </span>
-              <p className="text-sm leading-relaxed flex-1">「{line.text}」</p>
-              <span className="text-[9px] shrink-0 px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
-                {line.text.length}字
-              </span>
-            </div>
-          ))}
+          {result.lines.map((line, i) => {
+            const win = WINDOWS.find(w => w.key === line.w)
+            return (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-[9px] shrink-0 px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
+                  {line.part === 1 ? '前' : '後'} {win?.label}
+                </span>
+                <span className="text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded" style={{ background: 'var(--sk-primary-dim)', color: 'var(--sk-primary)' }}>
+                  {line.speaker}
+                </span>
+                <p className="text-sm leading-relaxed flex-1">「{line.text}」</p>
+                <span className="text-[9px] shrink-0 px-1.5 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
+                  {line.mora}音
+                </span>
+              </div>
+            )
+          })}
           <div className="flex items-center gap-2 pt-1" style={{ borderTop: '1px dashed var(--sk-border)' }}>
             <span className="text-[10px] px-2 py-0.5 rounded" style={{ background: 'rgba(0,0,0,0.04)', color: 'var(--sk-text-dim)', border: '1px solid var(--sk-border)' }}>
-              0:11-0:12
+              {HOLD_LABEL}
             </span>
-            <span className="text-[10px]" style={{ color: 'var(--sk-text-dim)' }}>無音（セリフなし）</span>
+            <span className="text-[10px]" style={{ color: 'var(--sk-text-dim)' }}>無音の静止（セリフなし。語尾が切れない余白）</span>
           </div>
         </div>
         <div className="px-4 py-2" style={{ borderTop: '1px dashed var(--sk-border)', background: 'rgba(0,0,0,0.02)' }}>
@@ -173,6 +304,7 @@ function App() {
   const [result, setResult] = useState(null)
   const [history, setHistory] = useState([])
   const [tab, setTab] = useState('latest')
+  const [mode, setMode] = useState('single')
 
   const handleRandom = useCallback(() => {
     const theme = getRandomTheme()
@@ -181,6 +313,7 @@ function App() {
     setResult(r)
     setHistory(prev => [{ theme, result: r }, ...prev].slice(0, 5))
     setTab('latest')
+    setMode('single')
   }, [])
 
   return (
@@ -192,16 +325,29 @@ function App() {
             <h1 className="text-base font-bold" style={{ color: 'var(--sk-primary)' }}>スカッと Prompt Generator</h1>
             <p className="text-[10px]" style={{ color: 'var(--sk-text-dim)' }}>ショートドラマ台本＆プロンプト — {themes.length}テーマ</p>
           </div>
-          <button
-            onClick={handleRandom}
-            className="px-5 py-2.5 text-sm font-bold rounded-xl transition hover:shadow-lg active:scale-95"
-            style={{ background: 'var(--sk-primary)', color: '#fff' }}
-          >
-            🎲 生成
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMode('batch')}
+              className="px-4 py-2.5 text-sm font-bold rounded-xl transition active:scale-95"
+              style={{
+                background: mode === 'batch' ? 'var(--sk-primary-dim)' : 'transparent',
+                border: '1px solid var(--sk-primary)',
+                color: 'var(--sk-primary)',
+              }}
+            >
+              📦 100話
+            </button>
+            <button
+              onClick={handleRandom}
+              className="px-5 py-2.5 text-sm font-bold rounded-xl transition hover:shadow-lg active:scale-95"
+              style={{ background: 'var(--sk-primary)', color: '#fff' }}
+            >
+              🎲 生成
+            </button>
+          </div>
         </div>
         {/* Tab bar */}
-        {result && (
+        {mode === 'single' && result && (
           <div className="max-w-3xl mx-auto px-4 flex gap-0" style={{ borderTop: '1px solid var(--sk-border)' }}>
             <button
               onClick={() => setTab('latest')}
@@ -229,21 +375,23 @@ function App() {
 
       <main className="max-w-3xl mx-auto px-4 py-5 space-y-4">
         {/* First visit message */}
-        {!result && !history.length && (
+        {mode === 'single' && !result && !history.length && (
           <div className="card p-8 text-center space-y-3">
             <p className="text-4xl">🎬</p>
-            <p className="text-sm font-bold" style={{ color: 'var(--sk-text)' }}>右上の「🎲 生成」ボタンを押してください</p>
-            <p className="text-xs" style={{ color: 'var(--sk-text-dim)' }}>ランダムにスカッと系ショートドラマのプロンプト・台本・タイトルが生成されます</p>
+            <p className="text-sm font-bold" style={{ color: 'var(--sk-text)' }}>右上の「🎲 生成」で1話、「📦 100話」でまとめて生成します</p>
+            <p className="text-xs" style={{ color: 'var(--sk-text-dim)' }}>セリフは前編・後編とも12秒に収まる量です。プロンプト・台本・タイトルが生成されます</p>
           </div>
         )}
 
         {/* Latest Output */}
-        {tab === 'latest' && result && selectedTheme && (
+        {mode === 'batch' && <BatchPanel />}
+
+        {mode === 'single' && tab === 'latest' && result && selectedTheme && (
           <PromptOutput result={result} theme={selectedTheme} />
         )}
 
         {/* History */}
-        {tab === 'history' && (
+        {mode === 'single' && tab === 'history' && (
           history.length > 0
             ? <HistoryPanel history={history} />
             : <div className="card p-8 text-center">
@@ -253,7 +401,7 @@ function App() {
       </main>
 
       <footer className="py-4 text-center">
-        <p className="text-[10px]" style={{ color: 'var(--sk-text-light)' }}>Sukatto Prompt Generator v1.0</p>
+        <p className="text-[10px]" style={{ color: 'var(--sk-text-light)' }}>Sukatto Prompt Generator v2.0</p>
       </footer>
     </div>
   )

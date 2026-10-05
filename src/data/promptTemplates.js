@@ -1,3 +1,5 @@
+import { shortLines } from './shortLines.js';
+
 // ===== SETTING DESCRIPTIONS =====
 const settingDescriptions = {
   "電車": "Crowded Japanese commuter train interior. Silver poles, blue priority seats, afternoon light through windows. The train sways gently.",
@@ -25,253 +27,177 @@ const settingDescriptions = {
 };
 
 // ===== STRIP ALL DIALOGUE FROM SCENE TEXT =====
-function stripDialogue(text) {
+// 動画生成AIのフィルターに弾かれる語は、生成時に言い換える
+function softenBanned(text) {
   return text
+    .replace(/revenge/gi, 'payback')
+    .replace(/horror/gi, 'shock')
+    .replace(/terror/gi, 'shock')
+    .replace(/hyper-detailed skin textures?/gi, 'natural skin');
+}
+
+function stripDialogue(text) {
+  return softenBanned(text)
     .replace(/\n?\[.*?\](?:,\s*[^:]*)?:\s*「[^」]*」/g, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
-// ===== BUILD SPEAKER LABEL (visual description for Sora2) =====
-function buildSpeakerLabel(char) {
-  if (!char) return 'Unknown';
-  const app = char.appearance;
-  // Extract: gender+age, hair, clothing — the 3 most visually distinctive traits
-  const genderAge = app.match(/Japanese\s+(male|female|man|woman|boy|girl),?\s*(early|mid|late)?\s*(\d+)/i);
-  const hairMatch = app.match(/(short|long|shoulder-length|cropped|styled|slicked|dyed-?brown|grey|silver|black|ponytail|bald|buzz)[^,.]*hair/i);
-  const clothesMatch = app.match(/wearing\s+([^.]+)/i);
 
-  const parts = [];
-  if (genderAge) parts.push(genderAge[0].replace(/Japanese\s+/i, ''));
-  if (hairMatch) parts.push(hairMatch[0].trim());
-  if (clothesMatch) parts.push(clothesMatch[1].trim().slice(0, 40));
-  return parts.join(', ') || app.slice(0, 80);
-}
-
-// ===== KEYWORD MAP for Japanese speaker → English character ID =====
-const speakerKeywords = {
-  '客': ['CUSTOMER', 'RUDE', 'MAN', 'ARROGANT', 'KNOW', 'CRITIC', 'CASUAL'],
-  '男性客': ['RUDE', 'MAN', 'ARROGANT', 'CUSTOMER'],
-  '女性客': ['WOMAN', 'FEMALE', 'CUSTOMER', 'KAREN'],
-  '店員': ['CLERK', 'STAFF', 'WORKER'],
-  '店長': ['MANAGER'],
-  'オーナー': ['OWNER'],
-  '社長': ['CEO', 'PRESIDENT'],
-  '部長': ['DEPARTMENT', 'HEAD', 'DIRECTOR'],
-  '課長': ['SECTION', 'CHIEF'],
-  '上司': ['BOSS', 'SUPERIOR'],
-  '部下': ['SUBORDINATE', 'WORKER'],
-  '社員': ['EMPLOYEE', 'STAFF', 'WORKER'],
-  '新人': ['ROOKIE', 'NEWBIE', 'NEW', 'STUDENT'],
-  '先輩': ['SENIOR', 'SENPAI'],
-  '後輩': ['JUNIOR', 'KOHAI'],
-  '同僚': ['COLLEAGUE', 'COWORKER'],
-  '運転手': ['DRIVER'],
-  '医師': ['DOCTOR', 'EXPERT', 'WORLD'],
-  '看護師': ['NURSE'],
-  '患者': ['PATIENT', 'KNOW_IT'],
-  '弁護士': ['LAWYER', 'ATTORNEY'],
-  '警察': ['POLICE', 'OFFICER', 'COP'],
-  '校長': ['PRINCIPAL'],
-  '先生': ['TEACHER', 'SENSEI'],
-  '生徒': ['STUDENT'],
-  '母': ['MOTHER', 'MOM', 'MAMA'],
-  '母親': ['MOTHER', 'MOM'],
-  '父': ['FATHER', 'DAD', 'PAPA'],
-  '父親': ['FATHER', 'DAD'],
-  '娘': ['DAUGHTER', 'GIRL'],
-  '息子': ['SON', 'BOY'],
-  '妻': ['WIFE'],
-  '夫': ['HUSBAND'],
-  '嫁': ['WIFE', 'BRIDE', 'DAUGHTER_IN_LAW'],
-  '姑': ['MOTHER_IN_LAW', 'MIL'],
-  '義姉': ['SISTER_IN_LAW'],
-  '新郎': ['GROOM'],
-  '新婦': ['BRIDE'],
-  '婚約者': ['FIANCE', 'PARTNER'],
-  '老人': ['OLD', 'ELDERLY', 'SENIOR'],
-  '老婦人': ['ELDERLY_WOMAN', 'OLD_WOMAN'],
-  '常連': ['REGULAR'],
-  '保健所': ['HEALTH'],
-  '人事': ['HR'],
-  '面接官': ['INTERVIEWER'],
-  '録音': ['RECORDING'],
-  'シェフ': ['CHEF', 'COOK'],
-  '板前': ['CHEF', 'COOK'],
-  'パート': ['PART_TIMER', 'WORKER'],
-  '派遣': ['TEMP', 'DISPATCH'],
-  '営業': ['SALES'],
-  'ソムリエ': ['SOMMELIER'],
-  'インターン': ['INTERN'],
-  '受付': ['RECEPTIONIST', 'FRONT'],
-  '担当者': ['REPRESENTATIVE', 'MANAGER'],
-  '被害者': ['VICTIM'],
-  'サラリーマン': ['BUSINESSMAN', 'SALARY'],
-  '司会': ['MC', 'HOST', 'EMCEE'],
-  'スタッフ': ['STAFF'],
-  '取締役': ['DIRECTOR', 'EXECUTIVE', 'CLEANER'],
-  '女性': ['WOMAN', 'FEMALE', 'LADY'],
-  '男': ['MAN', 'MALE', 'GUY'],
-  '男性': ['MAN', 'MALE'],
-  '孫': ['GRANDCHILD', 'GRANDSON'],
-  'おばあちゃん': ['GRANDMOTHER', 'ELDERLY'],
-  'おじいちゃん': ['GRANDFATHER', 'OLD'],
+// ===== 12秒クリップの時間枠とセリフ上限 =====
+// 日本語の音声は1秒6音ほど。枠ごとに上限を決め、1つのセリフは1つの枠の中で言い終える。
+export const WINDOWS = [
+  { key: 'A', label: '0:00-0:04' },
+  { key: 'B', label: '0:04-0:08' },
+  { key: 'C', label: '0:08-0:10.5' },
+];
+export const HOLD_LABEL = '0:10.5-0:12';
+export const CAPS = {
+  part1: { A: 24, B: 24, C: 15 },
+  part2: { A: 21, B: 24, C: 15 },
 };
+export const TOTAL_CAP = 55;
 
-// ===== BUILD SPEAKER MAP (keyword-based matching) =====
-function buildSpeakerMap(allLines, characters) {
-  const speakerToChar = {};
-  const usedChars = new Set();
-  const uniqueSpeakers = [...new Set(allLines.map(l => l.speaker))];
-
-  for (const sp of uniqueSpeakers) {
-    let bestChar = null;
-    let bestScore = 0;
-
-    // Try keyword matching
-    const keywords = speakerKeywords[sp] || [sp.toUpperCase()];
-
-    for (const char of characters) {
-      if (usedChars.has(char.id)) continue;
-      const charIdUpper = char.id.toUpperCase();
-      let score = 0;
-      for (const kw of keywords) {
-        if (charIdUpper.includes(kw.toUpperCase())) {
-          score += 10;
-        }
-      }
-      // Also check if speaker name appears in character appearance text
-      if (char.appearance.toLowerCase().includes(sp.toLowerCase())) {
-        score += 5;
-      }
-      if (score > bestScore) {
-        bestScore = score;
-        bestChar = char;
-      }
-    }
-
-    // Fallback: assign first unused character
-    if (!bestChar) {
-      for (const char of characters) {
-        if (!usedChars.has(char.id)) {
-          bestChar = char;
-          break;
-        }
-      }
-    }
-
-    if (bestChar) {
-      speakerToChar[sp] = bestChar;
-      usedChars.add(bestChar.id);
-    }
+// 音の数: かな=1・漢字=2・数字=2・英字=1・句読点と「…」=0（小さい ゃゅょ も0）
+export function mora(s) {
+  let n = 0;
+  for (const ch of s) {
+    if (/[ぁ-んァ-ヶー]/.test(ch)) n += /[ゃゅょぁぃぅぇぉャュョ]/.test(ch) ? 0 : 1;
+    else if (/[一-龥々]/.test(ch)) n += 2;
+    else if (/[0-9]/.test(ch)) n += 2;
+    else if (/[A-Za-z]/.test(ch)) n += 1;
   }
-
-  return speakerToChar;
+  return n;
 }
 
-// ===== BUILD SORA2 OFFICIAL DIALOGUE BLOCK =====
-// Format: Dialogue:\n- SpeakerVisualDesc: "セリフ"
-function buildDialogueBlock(lines, speakerToChar) {
-  const dialogueLines = lines.map(line => {
-    const char = speakerToChar[line.speaker];
-    const label = char ? buildSpeakerLabel(char) : line.speaker;
-    return `- ${label}: "${line.text}"`;
-  }).join('\n');
-
-  return `Dialogue:\n${dialogueLines}`;
+function lowerFirst(text) {
+  // 「Close-up」→「close-up」。人物ID（RUDE_MAN など）で始まるときはそのまま
+  return /^[A-Z][a-z]/.test(text) ? text.charAt(0).toLowerCase() + text.slice(1) : text;
 }
 
-// ===== PICK RANDOM FROM ARRAY =====
-function pickRandom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+function measure(part, lines) {
+  const caps = CAPS[part];
+  const perWindow = { A: 0, B: 0, C: 0 };
+  for (const l of lines) perWindow[l.w] += mora(l.t);
+  const total = lines.reduce((s, l) => s + mora(l.t), 0);
+  const ok = total <= TOTAL_CAP && WINDOWS.every(w => perWindow[w.key] <= caps[w.key]);
+  return { perWindow, total, ok };
+}
+
+function buildPart({ part, charBlock, setting, scenes, lines }) {
+  const isPart2 = part === 'part2';
+  const head = `Cinematic short drama, 9:16 vertical, 4K, photorealistic, dramatic lighting, Japanese contemporary setting. 12 seconds. No background music.${isPart2 ? ' Continuing directly from Part 1, same location, same lighting, same characters.' : ''}`;
+
+  const windows = WINDOWS.map((w, i) => {
+    let action = stripDialogue(scenes[i] || '');
+    if (isPart2 && i === 0) action = `Silent beat for half a second, then ${lowerFirst(action)}`;
+    const spoken = lines
+      .filter(l => l.w === w.key)
+      .map(l => `[${l.c}]: 「${l.t}」`)
+      .join('\n');
+    return `(${w.label}) ${action}${spoken ? `\n${spoken}` : ''}`;
+  }).join('\n\n');
+
+  const hold = isPart2
+    ? `(${HOLD_LABEL}) Wide shot, static hold, no dialogue, no camera movement. Characters nearly still. Silent.`
+    : `(${HOLD_LABEL}) Static hold, no dialogue, no camera movement, no character motion. Silent.`;
+
+  return `${head}
+
+#CHARACTERS${isPart2 ? ' (identical to Part 1 — same face, same hair, same clothes)' : ''}
+${charBlock}
+
+#SETTING
+${setting}
+
+#SCENE (12 seconds, no text on screen, no background music)
+${windows}
+
+${hold}`;
 }
 
 // ===== MAIN GENERATION =====
-export function generatePrompts(theme) {
+// opts.v1 / opts.v2: 使う案の番号（0〜4）。省略するとランダム。
+export function generatePrompts(theme, opts = {}) {
   const setting = settingDescriptions[theme.setting] || settingDescriptions["オフィス"];
+  const sl = shortLines[theme.id];
+  if (!sl) throw new Error(`theme ${theme.id}: 短縮セリフがありません`);
+  // 元のキャラ一覧にいない人物（社長・警察など）は、その回のセリフで話すときだけ人物欄に足す
+  const extra = sl.extra || [];
+  const charBlockFor = lines => [...theme.characters, ...extra.filter(e => lines.some(l => l.c === e.id))]
+    .map(c => `${c.id}: ${c.appearance}`).join('\n');
+  const i1 = opts.v1 ?? Math.floor(Math.random() * sl.v1.length);
+  const i2 = opts.v2 ?? Math.floor(Math.random() * sl.v2.length);
+  const lines1 = sl.v1[i1];
+  const lines2 = sl.v2[i2];
 
-  // Character descriptions
-  const charBlock = theme.characters.map(c => `${c.id}: ${c.appearance}`).join('\n');
+  const part1 = softenBanned(buildPart({ part: 'part1', charBlock: charBlockFor(lines1), setting, scenes: theme.scene1, lines: lines1 }));
+  const part2 = softenBanned(buildPart({ part: 'part2', charBlock: charBlockFor(lines2), setting, scenes: theme.scene2, lines: lines2 }));
 
-  // Pick from line variations if available, otherwise use default
-  let lines1, lines2;
-  if (theme.lines1Alts && theme.lines1Alts.length > 0) {
-    const allLines1 = [theme.lines1 || theme.lines.slice(0, Math.ceil(theme.lines.length / 2)), ...theme.lines1Alts];
-    lines1 = pickRandom(allLines1);
-  } else {
-    lines1 = theme.lines1 || theme.lines.slice(0, Math.ceil(theme.lines.length / 2));
-  }
-  if (theme.lines2Alts && theme.lines2Alts.length > 0) {
-    const allLines2 = [theme.lines2 || theme.lines.slice(Math.ceil(theme.lines.length / 2)), ...theme.lines2Alts];
-    lines2 = pickRandom(allLines2);
-  } else {
-    lines2 = theme.lines2 || theme.lines.slice(Math.ceil(theme.lines.length / 2));
-  }
-
-  const chars1 = lines1.reduce((s, l) => s + l.text.length, 0);
-  const chars2 = lines2.reduce((s, l) => s + l.text.length, 0);
-
-  // Build consistent speaker map from ALL lines, then use it for both parts
-  const allLinesForMap = [...lines1, ...lines2];
-  const speakerToChar = buildSpeakerMap(allLinesForMap, theme.characters);
-
-  // Build Sora2 official format dialogue blocks
-  const dialogue1 = buildDialogueBlock(lines1, speakerToChar);
-  const dialogue2 = buildDialogueBlock(lines2, speakerToChar);
-
-  // Build visual scene descriptions (dialogue stripped out)
-  const timings = [[0, 4], [4, 8], [8, 11]];
-  const buildSceneBlock = (scenes) => scenes.map((s, i) => {
-    const [ts, te] = timings[i];
-    return `(0:${String(ts).padStart(2,'0')}-0:${String(te).padStart(2,'0')}) ${stripDialogue(s)}`;
-  }).join('\n\n');
-
-  const scene1Text = buildSceneBlock(theme.scene1);
-  const scene2Text = buildSceneBlock(theme.scene2);
-
-  // ===== PART 1 PROMPT (Sora2 official format) =====
-  const part1 = `Cinematic short drama, 9:16 vertical, 4K, photorealistic, dramatic lighting, Japanese contemporary setting. 12 seconds. No background music.
-
-Characters (identical in Part 1 and Part 2):
-${charBlock}
-
-${setting}
-
-${scene1Text}
-
-(0:11-0:12) Silent hold. No dialogue. Character's expression only.
-
-${dialogue1}`;
-
-  // ===== PART 2 PROMPT (Sora2 official format) =====
-  const part2 = `Cinematic short drama, 9:16 vertical, 4K, photorealistic, dramatic lighting, Japanese contemporary setting. 12 seconds. No background music. Continuing directly from Part 1.
-
-Characters (identical to Part 1 — same face, same hair, same clothes):
-${charBlock}
-
-${setting}
-
-${scene2Text}
-
-(0:11-0:12) Silent. Slow fade to black. Text fades in: 「${theme.endText}」
-
-${dialogue2}`;
-
-  // Build copy-friendly script
-  const allLines = [...lines1, ...lines2];
+  const allLines = [...lines1.map(l => ({ ...l, part: 1 })), ...lines2.map(l => ({ ...l, part: 2 }))]
+    .map(l => ({ speaker: l.jp, text: l.t, w: l.w, part: l.part, mora: mora(l.t) }));
   const scriptText = allLines.map(l => `${l.speaker}「${l.text}」`).join('\n');
+
+  const m1 = measure('part1', lines1);
+  const m2 = measure('part2', lines2);
 
   return {
     part1, part2,
     script: scriptText,
     lines: allLines,
-    lines1, lines2,
     endText: theme.endText,
+    variant: { v1: i1, v2: i2 },
     meta: {
       lineCount: allLines.length,
-      totalChars: chars1 + chars2,
-      part1Chars: chars1,
-      part2Chars: chars2,
+      part1: m1,
+      part2: m2,
+      ok: m1.ok && m2.ok,
     },
   };
+}
+
+// ===== 一括生成（100話など） =====
+// 100テーマを1話ずつ使う。100話を超えるときは2周目から別の案を使う。
+export function generateEpisodes(themeList, count, { shuffle = false } = {}) {
+  let order = themeList.slice();
+  if (shuffle) {
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j], order[i]];
+    }
+  }
+  const episodes = [];
+  for (let n = 0; n < count; n++) {
+    const theme = order[n % order.length];
+    const round = Math.floor(n / order.length);
+    const result = generatePrompts(theme, round === 0 ? {} : { v1: round % 5, v2: round % 5 });
+    episodes.push({ no: n + 1, theme, result });
+  }
+  return episodes;
+}
+
+const pad3 = n => String(n).padStart(3, '0');
+
+// check_dialogue.py にそのまま通せる形（===== 名前 ===== 区切り）
+export function episodesToTxt(episodes) {
+  return episodes.map(e => {
+    const name = `${pad3(e.no)}`;
+    return `===== ${name}-A ${e.theme.title}（前編） =====\n${e.result.part1}\n\n===== ${name}-B ${e.theme.title}（後編） =====\n${e.result.part2}\n`;
+  }).join('\n');
+}
+
+function csvCell(v) {
+  return `"${String(v).replace(/"/g, '""')}"`;
+}
+
+// 題名・説明文・台本・テロップの一覧（Excel・スプレッドシートで開ける）
+export function episodesToCsv(episodes) {
+  const head = ['話数', 'テーマ', 'YouTube題名', '説明文', '前編セリフ', '後編セリフ', '前編音数', '後編音数', 'テロップ'];
+  const rows = episodes.map(e => {
+    const l1 = e.result.lines.filter(l => l.part === 1).map(l => `${l.speaker}「${l.text}」`).join('\n');
+    const l2 = e.result.lines.filter(l => l.part === 2).map(l => `${l.speaker}「${l.text}」`).join('\n');
+    return [pad3(e.no), e.theme.title, e.theme.ytTitle, e.theme.ytDesc, l1, l2,
+      e.result.meta.part1.total, e.result.meta.part2.total, e.result.endText].map(csvCell).join(',');
+  });
+  return '﻿' + [head.map(csvCell).join(','), ...rows].join('\r\n');
 }
